@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>สุ่มร้านอาหาร (ฟรี + GPS อัตโนมัติ + นำทาง)</title>
+    <title>สุ่มร้านอาหาร </title>
     
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     
@@ -33,15 +33,15 @@
 <body>
 
     <div class="container">
-        <h1>🍽️ สุ่มร้านอาหารรอบตัวคุณ</h1>
+        <h1> สุ่มร้านอาหารรอบตัวคุณ</h1>
         
         <div class="controls">
             <label for="radius">ระยะทาง (เมตร): </label>
             <input type="number" id="radius" value="1000" step="100" min="100" max="5000">
-            <button class="btn-search" onclick="searchRestaurants()">1. ค้นหาร้านรอบๆ หมุด</button>
+            <button class="btn-search" onclick="searchRestaurants()">1. ค้นหาร้าน</button>
         </div>
 
-        <p id="loading">⏳ กำลังค้นหาร้านอาหาร... รอแป๊บนะครับ</p>
+        <p id="loading">⏳ กำลังค้นหาร้านอาหาร... รอสักครู่นะครับ</p>
         <p style="font-size: 14px; color: #666;"><i>📍 เบราว์เซอร์จะดึงพิกัดปัจจุบันให้ หากต้องการเปลี่ยนจุด ให้ <b>"คลิกที่แผนที่"</b> ได้เลย</i></p>
         
         <div id="map"></div>
@@ -175,8 +175,8 @@
                                 .bindPopup(`<b>${shop.name}</b>`);
                         });
 
-                        // เอาร้านมาแค่วาดวงล้อให้พอดี (สูงสุด 12 ร้าน)
-                        const wheelList = restaurantList.length > 12 ? restaurantList.slice(0, 12) : restaurantList;
+                        // เอาร้านมาแค่วาดวงล้อให้พอดี (สูงสุด 20 ร้าน)
+                        const wheelList = restaurantList.length > 20 ? restaurantList.slice(0, 20) : restaurantList;
                         restaurantList = wheelList; // อัปเดต list สำหรับวงล้อ
                         
                         document.getElementById('wheel-section').style.display = 'block';

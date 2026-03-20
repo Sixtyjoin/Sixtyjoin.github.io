@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>สุ่มร้านอาหาร (ฟรี + GPS อัตโนมัติ + นำทาง)</title>
+    
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; text-align: center; background-color: #f4f4f9; margin: 0; padding: 20px; }
+        .container { max-width: 800px; margin: 0 auto; background: white; padding: 20px; border-radius: 10px; box-shadow: 0 4px 8px rgba(0,0,0,0.1); }
+        .controls { margin-bottom: 20px; }
+        input, button { padding: 10px; font-size: 16px; margin: 5px; border-radius: 5px; border: 1px solid #ccc; }
+        .btn-search { background-color: #4CAF50; color: white; border: none; cursor: pointer; font-weight: bold; }
+        .btn-search:hover { background-color: #45a049; }
+        .btn-spin { background-color: #ff5722; color: white; border: none; cursor: pointer; font-weight: bold; padding:15px 30px; font-size: 18px; margin-top:20px;}
+        .btn-spin:hover { background-color: #e64a19; }
+        .nav-btn { display: inline-block; background-color: #4285F4; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px; font-weight: bold; margin-top: 15px; }
+        .nav-btn:hover { background-color: #3367d6; }
+        
+        #map { width: 100%; height: 350px; border-radius: 8px; margin-bottom: 20px; z-index: 1; cursor: crosshair; }
+
+        /* ส่วนของวงล้อ */
+        #wheel-section { display: none; margin-top: 30px; border-top: 2px dashed #ccc; padding-top: 20px; }
+        #wheel-container { position: relative; width: 350px; height: 350px; margin: 0 auto; overflow: hidden; border-radius: 50%; box-shadow: 0 0 15px rgba(0,0,0,0.2); }
+        .pointer { position: absolute; top: 50%; right: 0; transform: translateY(-50%); width: 0; height: 0; border-top: 15px solid transparent; border-bottom: 15px solid transparent; border-right: 30px solid #333; z-index: 10; }
+        canvas { width: 100%; height: 100%; transition: transform 4s cubic-bezier(0.25, 0.1, 0.25, 1); }
+        #result { margin-top: 20px; color: #d32f2f; font-size: 24px; }
+        #loading { display: none; color: #ff9800; font-weight: bold; margin-bottom: 10px;}
+    </style>
+</head>
+<body>
+
+    <div class="container">
+        <h1>🍽️ สุ่มร้านอาหารรอบตัวคุณ</h1>
+        
+        <div class="controls">
+            <label for="radius">ระยะทาง (เมตร): </label>
+            <input type="number" id="radius" value="1000" step="100" min="100" max="5000">
+            <button class="btn-search" onclick="searchRestaurants()">1. ค้นหาร้านรอบๆ หมุด</button>
+        </div>
+
+        <p id="loading">⏳ กำลังค้นหาร้านอาหาร... รอแป๊บนะครับ</p>
+        <p style="font-size: 14px; color: #666;"><i>📍 เบราว์เซอร์จะดึงพิกัดปัจจุบันให้ หากต้องการเปลี่ยนจุด ให้ <b>"คลิกที่แผนที่"</b> ได้เลย</i></p>
+        
+        <div id="map"></div>
+
+        <div id="wheel-section">
+            <h2>เจอร้านแล้ว! มาหมุนวงล้อกัน</h2>
+            <div id="wheel-container">
+                <div class="pointer"></div>
+                <canvas id="wheel" width="400" height="400"></canvas>
+            </div>
+            <button class="btn-spin" onclick="spinWheel()">2. กดหมุนวงล้อ!</button>
+            <div id="result"></div>
+        </div>
+    </div>
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script>
+        let map;
+        let userMarker;
+        let restaurantsLayerGroup; // เอาไว้เก็บหมุดร้านอาหาร
+        let restaurantList = [];
+        const canvas = document.getElementById('wheel');
+        const ctx = canvas.getContext('2d');
+        let currentRotation = 0;
+
+        // ไอคอนสำหรับร้านอาหาร (แยกสีให้ต่างจากหมุดผู้ใช้)
+        const restaurantIcon = L.icon({
+            iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-red.png',
+            shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/0.7.7/images/marker-shadow.png',
+            iconSize: [25, 41],
+            iconAnchor: [12, 41],
+            popupAnchor: [1, -34],
+            shadowSize: [41, 41]
+        });
+
+        // 1. สร้างแผนที่และขอ GPS
+        function initMap() {
+            // ตั้งค่าเริ่มต้น (เผื่อผู้ใช้ไม่ให้สิทธิ์ GPS)
+            const defaultLat = 13.7649;
+            const defaultLng = 100.5383;
+
+            map = L.map('map').setView([defaultLat, defaultLng], 15);
+
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                attribution: '© OpenStreetMap'
+            }).addTo(map);
+
+            // สร้างกลุ่มสำหรับใส่หมุดร้านอาหาร จะได้ลบง่ายๆ เวลาค้นหาใหม่
+            restaurantsLayerGroup = L.layerGroup().addTo(map);
+
+            // สร้างหมุดผู้ใช้
+            userMarker = L.marker([defaultLat, defaultLng]).addTo(map);
+
+            // เปลี่ยนจากลาก เป็น "คลิกเพื่อย้ายหมุด"
+            map.on('click', function(e) {
+                userMarker.setLatLng(e.latlng);
+            });
+
+            // ขอสิทธิ์และดึง GPS ปัจจุบัน
+            if (navigator.geolocation) {
+                navigator.geolocation.getCurrentPosition(
+                    (position) => {
+                        const userLat = position.coords.latitude;
+                        const userLng = position.coords.longitude;
+                        const newLatLng = new L.LatLng(userLat, userLng);
+                        
+                        map.setView(newLatLng, 15);
+                        userMarker.setLatLng(newLatLng);
+                    },
+                    (error) => {
+                        console.warn("ไม่สามารถดึง GPS ได้ หรือผู้ใช้ไม่อนุญาต", error);
+                    }
+                );
+            }
+        }
+
+        // 2. ค้นหาร้านและแสดงหมุดบนแผนที่
+        function searchRestaurants() {
+            document.getElementById('loading').style.display = 'block';
+            document.getElementById('wheel-section').style.display = 'none';
+            document.getElementById('result').innerHTML = ''; // เคลียร์ผลลัพธ์เก่า
+            
+            // ล้างหมุดร้านอาหารเก่าออกให้หมดก่อน
+            restaurantsLayerGroup.clearLayers();
+
+            const radius = document.getElementById("radius").value;
+            const userLocation = userMarker.getLatLng();
+            const lat = userLocation.lat;
+            const lng = userLocation.lng;
+
+            // ใช้ nwr (node, way, relation) เพื่อดึงข้อมูลร้านให้ครอบคลุมขึ้น
+            const query = `
+                [out:json];
+                (
+                  nwr["amenity"="restaurant"](around:${radius},${lat},${lng});
+                  nwr["amenity"="cafe"](around:${radius},${lat},${lng});
+                  nwr["amenity"="fast_food"](around:${radius},${lat},${lng});
+                  nwr["amenity"="food_court"](around:${radius},${lat},${lng});
+                );
+                out center;
+            `;
+
+            const url = `https://overpass-api.de/api/interpreter?data=${encodeURIComponent(query)}`;
+
+            fetch(url)
+                .then(response => response.json())
+                .then(data => {
+                    document.getElementById('loading').style.display = 'none';
+                    
+                    // เก็บข้อมูล ชื่อร้าน และ พิกัด (Lat/Lng)
+                    restaurantList = data.elements
+                        .filter(el => el.tags && el.tags.name)
+                        .map(el => {
+                            // หาพิกัดจาก node หรือ center (สำหรับ way/relation)
+                            const rLat = el.lat || (el.center ? el.center.lat : null);
+                            const rLon = el.lon || (el.center ? el.center.lon : null);
+                            return { name: el.tags.name, lat: rLat, lng: rLon };
+                        })
+                        .filter(el => el.lat !== null && el.lng !== null); // เอาเฉพาะอันที่มีพิกัดชัดเจน
+
+                    // ลบร้านที่ชื่อซ้ำกันออก (บางทีระบบมีหมุดซ้ำ)
+                    restaurantList = restaurantList.filter((value, index, self) =>
+                        index === self.findIndex((t) => (t.name === value.name))
+                    );
+
+                    if (restaurantList.length > 0) {
+                        // ปักหมุดร้านอาหารทุกร้านที่หาเจอลงบนแผนที่
+                        restaurantList.forEach(shop => {
+                            L.marker([shop.lat, shop.lng], {icon: restaurantIcon})
+                                .addTo(restaurantsLayerGroup)
+                                .bindPopup(`<b>${shop.name}</b>`);
+                        });
+
+                        // เอาร้านมาแค่วาดวงล้อให้พอดี (สูงสุด 12 ร้าน)
+                        const wheelList = restaurantList.length > 12 ? restaurantList.slice(0, 12) : restaurantList;
+                        restaurantList = wheelList; // อัปเดต list สำหรับวงล้อ
+                        
+                        document.getElementById('wheel-section').style.display = 'block';
+                        currentRotation = 0;
+                        canvas.style.transform = `rotate(0deg)`;
+                        drawWheel();
+                        
+                        // ซูมแผนที่ให้เห็นครอบคลุมทั้งหมุดเราและหมุดร้าน
+                        const group = new L.featureGroup([userMarker, ...restaurantsLayerGroup.getLayers()]);
+                        map.fitBounds(group.getBounds().pad(0.1));
+
+                        alert(`เจอร้านอาหาร ${restaurantList.length} ร้าน ดูหมุดสีแดงบนแผนที่แล้วเตรียมหมุนได้เลย!`);
+                    } else {
+                        alert("ไม่พบร้านอาหารในรัศมีนี้ ลองขยายระยะทางดูนะครับ");
+                    }
+                })
+                .catch(error => {
+                    document.getElementById('loading').style.display = 'none';
+                    alert("เกิดข้อผิดพลาดในการดึงข้อมูล ลองใหม่อีกครั้งครับ");
+                    console.error("Error:", error);
+                });
+        }
+
+        // 3. ฟังก์ชันวาดวงล้อ
+        function drawWheel() {
+            const numSlices = restaurantList.length;
+            const sliceAngle = (2 * Math.PI) / numSlices;
+            const colors = ['#f44336', '#e91e63', '#9c27b0', '#673ab7', '#3f51b5', '#2196f3', '#03a9f4', '#00bcd4', '#009688', '#4caf50', '#cddc39', '#ffeb3b'];
+
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            const centerX = canvas.width / 2;
+            const centerY = canvas.height / 2;
+            const radius = canvas.width / 2;
+
+            for (let i = 0; i < numSlices; i++) {
+                ctx.beginPath();
+                ctx.fillStyle = colors[i % colors.length];
+                ctx.moveTo(centerX, centerY);
+                ctx.arc(centerX, centerY, radius, i * sliceAngle, (i + 1) * sliceAngle);
+                ctx.fill();
+
+                ctx.save();
+                ctx.translate(centerX, centerY);
+                ctx.rotate(i * sliceAngle + sliceAngle / 2);
+                ctx.textAlign = 'right';
+                ctx.fillStyle = '#fff';
+                ctx.font = 'bold 16px sans-serif';
+                let text = restaurantList[i].name;
+                if(text.length > 15) text = text.substring(0, 15) + '...';
+                ctx.fillText(text, radius - 30, 5);
+                ctx.restore();
+            }
+        }
+
+        // 4. ฟังก์ชันหมุนวงล้อและแสดงปุ่มนำทาง
+        function spinWheel() {
+            if(restaurantList.length === 0) return;
+
+            document.getElementById('result').innerHTML = "<i>กำลังหมุน... ตื่นเต้นล่ะสิ!</i>";
+
+            const extraDegrees = Math.floor(Math.random() * 360);
+            const spinAngle = (360 * 5) + extraDegrees; 
+            currentRotation += spinAngle;
+            canvas.style.transform = `rotate(${currentRotation}deg)`;
+
+            setTimeout(() => {
+                const sliceAngleDeg = 360 / restaurantList.length;
+                const actualDeg = currentRotation % 360;
+                // คำนวณหาผู้ชนะ
+                const winnerIndex = Math.floor(((360 - actualDeg) % 360) / sliceAngleDeg);
+                const winner = restaurantList[winnerIndex];
+                
+                // สร้างลิงก์นำทาง Google Maps (จากหมุดเรา ไปยัง ร้านผู้ชนะ)
+                const userLoc = userMarker.getLatLng();
+                const mapLink = `https://www.google.com/maps/dir/?api=1&origin=${userLoc.lat},${userLoc.lng}&destination=${winner.lat},${winner.lng}`;
+
+                // แสดงผลลัพธ์พร้อมปุ่มนำทาง
+                document.getElementById('result').innerHTML = `
+                    🎉 ร้านที่คุณต้องไปกินคือ: <br><b>${winner.name}</b><br>
+                    <a href="${mapLink}" target="_blank" class="nav-btn">📍 นำทางไปร้านนี้ด้วย Google Maps</a>
+                `;
+            }, 4000); 
+        }
+
+        // เรียกใช้งานแผนที่ตอนเปิดเว็บ
+        window.onload = initMap;
+    </script>
+</body>
+</html>
